@@ -1,0 +1,31 @@
+name: price-monitor
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 min, 24/7 UTC
+  workflow_dispatch:          # allow manual runs from GH UI
+
+concurrency:
+  group: price-monitor
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - run: python -m src.price_monitor
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}

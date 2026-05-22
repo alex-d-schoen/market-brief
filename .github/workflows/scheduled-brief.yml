@@ -1,0 +1,48 @@
+name: scheduled-brief
+
+on:
+  schedule:
+    # Both CET (winter, UTC+1) and CEST (summer, UTC+2) variants per slot.
+    # The Python entrypoint gates on local Europe/Zurich time so only the
+    # one that actually lands at 07:00 / 13:00 / 22:30 local fires.
+    #
+    # Morning Brief — 07:00 Zurich
+    - cron: "0 6 * * *"      # 06:00 UTC → 07:00 CET (winter)
+    - cron: "0 5 * * *"      # 05:00 UTC → 07:00 CEST (summer)
+    # Midday Brief — 13:00 Zurich
+    - cron: "0 12 * * *"     # 12:00 UTC → 13:00 CET
+    - cron: "0 11 * * *"     # 11:00 UTC → 13:00 CEST
+    # Evening Brief — 22:30 Zurich
+    - cron: "30 21 * * *"    # 21:30 UTC → 22:30 CET
+    - cron: "30 20 * * *"    # 20:30 UTC → 22:30 CEST
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: "Force a slot (Morning Brief / Midday Brief / Evening Brief)"
+        required: false
+        default: ""
+
+concurrency:
+  group: scheduled-brief
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - run: python -m src.scheduled_brief
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          BRIEF_SLOT: ${{ github.event.inputs.slot }}
