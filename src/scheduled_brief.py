@@ -51,7 +51,7 @@ def _slot_label(now_local: datetime) -> tuple[str, str, str]:
 # GH Actions cron schedules both CET and CEST UTC equivalents; this gate
 # ensures only the one that lands at the right local time actually fires.
 _BRIEF_SLOTS = [(7, 0), (13, 0), (22, 30)]
-_SLOT_TOLERANCE_MIN = 15  # cron can be late by a few min; allow some slop
+_SLOT_TOLERANCE_MIN = 30  # GH Actions free-tier cron drift can be 20-30 min
 
 
 def _is_brief_time(now_local: datetime) -> bool:
