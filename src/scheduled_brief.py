@@ -37,29 +37,53 @@ class AssetLine:
     note: str = ""
 
 
+_SLOT_META = {
+    "Morning Brief": ("Morning Brief", "sunrise"),
+    "Midday Brief": ("Midday Brief", "sun_with_face"),
+    "Evening Brief": ("Evening Brief", "crescent_moon"),
+}
+
+
 def _slot_label(now_local: datetime) -> tuple[str, str, str]:
-    """Return (alert_type, ntfy_title_prefix, emoji_tag) for the current hour."""
+    """Fallback: guess the slot from local hour. Used for manual CLI runs."""
     h = now_local.hour
     if h < 11:
-        return "Morning Brief", "Morning Brief", "sunrise"
+        return "Morning Brief", *_SLOT_META["Morning Brief"]
     if h < 17:
-        return "Midday Brief", "Midday Brief", "sun_with_face"
-    return "Evening Brief", "Evening Brief", "crescent_moon"
+        return "Midday Brief", *_SLOT_META["Midday Brief"]
+    return "Evening Brief", *_SLOT_META["Evening Brief"]
 
 
-# Target Europe/Zurich local times for each brief slot.
-# GH Actions cron schedules both CET and CEST UTC equivalents; this gate
-# ensures only the one that lands at the right local time actually fires.
-_BRIEF_SLOTS = [(7, 0), (13, 0), (22, 30)]
-_SLOT_TOLERANCE_MIN = 30  # GH Actions free-tier cron drift can be 20-30 min
+# Map the cron expression that triggered the GH Actions run to (slot_label,
+# UTC offset hours the cron assumes). Each slot has two crons — one for CET
+# (UTC+1, winter) and one for CEST (UTC+2, summer) — and only the one that
+# matches the current DST offset should fire.
+_CRON_TO_SLOT: dict[str, tuple[str, int]] = {
+    "0 6 * * *":   ("Morning Brief", 1),
+    "0 5 * * *":   ("Morning Brief", 2),
+    "0 12 * * *":  ("Midday Brief", 1),
+    "0 11 * * *":  ("Midday Brief", 2),
+    "30 21 * * *": ("Evening Brief", 1),
+    "30 20 * * *": ("Evening Brief", 2),
+}
 
 
-def _is_brief_time(now_local: datetime) -> bool:
-    for h, m in _BRIEF_SLOTS:
-        delta_min = abs((now_local.hour - h) * 60 + (now_local.minute - m))
-        if delta_min <= _SLOT_TOLERANCE_MIN:
-            return True
-    return False
+def _slot_from_cron(cron: str, now_local: datetime) -> tuple[str, str, str] | None:
+    """Resolve the cron expression to (alert_type, prefix, emoji), or None if
+    this cron is for the other DST season (and so should be skipped today).
+
+    Using the triggering cron instead of wall-clock time avoids GH Actions
+    free-tier cron drift (frequently 1-3 hours) eating every scheduled run.
+    """
+    entry = _CRON_TO_SLOT.get(cron.strip())
+    if entry is None:
+        return None
+    slot, cron_offset = entry
+    offset = now_local.utcoffset()
+    if offset is None or int(offset.total_seconds() // 3600) != cron_offset:
+        return None
+    prefix, emoji = _SLOT_META[slot]
+    return slot, prefix, emoji
 
 
 def _snapshot_stock(ticker: str) -> AssetLine | None:
@@ -120,19 +144,27 @@ def _format_lines(lines: list[AssetLine]) -> str:
 def run() -> int:
     started = datetime.now(timezone.utc)
     now_local = started.astimezone(ZoneInfo(TZ))
-    alert_type, prefix, emoji = _slot_label(now_local)
 
-    # Manual override via env (used by tests / manual triggers)
     forced = os.environ.get("BRIEF_SLOT", "").strip()
-    if forced in {"Morning Brief", "Midday Brief", "Evening Brief"}:
-        alert_type = prefix = forced
-        emoji = {"Morning Brief": "sunrise", "Midday Brief": "sun_with_face", "Evening Brief": "crescent_moon"}[forced]
+    triggering_cron = os.environ.get("TRIGGERING_CRON", "").strip()
+
+    if forced in _SLOT_META:
+        alert_type = forced
+        prefix, emoji = _SLOT_META[forced]
+    elif triggering_cron:
+        resolved = _slot_from_cron(triggering_cron, now_local)
+        if resolved is None:
+            print(
+                f"scheduled_brief start {started.isoformat()} "
+                f"({now_local.strftime('%H:%M %Z')}) — cron {triggering_cron!r} "
+                f"is for the off-season DST variant; skipping"
+            )
+            return 0
+        alert_type, prefix, emoji = resolved
+    else:
+        alert_type, prefix, emoji = _slot_label(now_local)
 
     print(f"scheduled_brief start {started.isoformat()} ({now_local.strftime('%H:%M %Z')}) → {alert_type}")
-
-    if not forced and not _is_brief_time(now_local):
-        print(f"  not within {_SLOT_TOLERANCE_MIN}min of a brief slot ({_BRIEF_SLOTS}); skipping")
-        return 0
 
     positions = fetch_open_positions()
     watchlist = fetch_active_watchlist()

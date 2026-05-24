@@ -46,3 +46,4 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           BRIEF_SLOT: ${{ github.event.inputs.slot }}
+          TRIGGERING_CRON: ${{ github.event.schedule }}
